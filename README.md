@@ -1,5 +1,5 @@
 -- language: Luau, target: Roblox (Sniper Arena), runtime: executor
--- ESP: boxes, nomes, vida, distância, tracers, head dot
+-- ESP com scan/render separados — atualiza todo frame
 
 ----------------------------------------------------------------------
 -- SERVICES
@@ -13,21 +13,28 @@ local Camera           = Workspace.CurrentCamera
 local LP               = Players.LocalPlayer
 
 ----------------------------------------------------------------------
+-- CLEANUP ANTERIOR
+----------------------------------------------------------------------
+if getgenv().SniperESPCleanup then
+    pcall(getgenv().SniperESPCleanup)
+end
+
+----------------------------------------------------------------------
 -- CONFIG
 ----------------------------------------------------------------------
 local CFG = {
-    Enabled   = true,
-    Boxes     = true,
-    Names     = true,
-    Health    = true,
-    Distance  = true,
-    Tracers   = false,
-    HeadDot   = true,
-    TeamCheck = true,     -- false = marca todo mundo
-    TeamColor = false,    -- true = cor da box segue team color
-    MaxDist   = 1200,
-    BoxColor  = Color3.fromRGB(255, 40, 40),
-    TracerOrigin = "Bottom", -- "Bottom" ou "Center"
+    Enabled      = true,
+    Boxes        = true,
+    Names        = true,
+    Health       = true,
+    Distance     = true,
+    Tracers      = false,
+    HeadDot      = true,
+    TeamCheck    = true,
+    TeamColor    = false,
+    MaxDist      = 1200,
+    BoxColor     = Color3.fromRGB(255, 40, 40),
+    TracerOrigin = "Bottom",
 }
 
 ----------------------------------------------------------------------
@@ -176,24 +183,20 @@ Gui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
 pcall(function() Gui.Parent = CoreGui end)
 if not Gui.Parent then Gui.Parent = LP:WaitForChild("PlayerGui") end
 
--- main frame
 local Main = Instance.new("Frame")
-Main.Size = UDim2.new(0, 220, 0, 0)  -- auto height
+Main.Size = UDim2.new(0, 220, 0, 0)
 Main.Position = UDim2.new(0, 16, 0.5, -150)
 Main.BackgroundColor3 = Color3.fromRGB(14, 14, 18)
 Main.BorderSizePixel = 0; Main.AutomaticSize = Enum.AutomaticSize.Y
 Main.Active = true; Main.Parent = Gui
 Instance.new("UICorner", Main).CornerRadius = UDim.new(0, 8)
-local stroke = Instance.new("UIStroke", Main)
-stroke.Color = Color3.fromRGB(200, 60, 20); stroke.Thickness = 1.5; stroke.Transparency = 0.3
+local stk = Instance.new("UIStroke", Main)
+stk.Color = Color3.fromRGB(200, 60, 20); stk.Thickness = 1.5; stk.Transparency = 0.3
+Instance.new("UIPadding", Main).PaddingBottom = UDim.new(0, 6)
+local lay = Instance.new("UIListLayout", Main)
+lay.Padding = UDim.new(0, 2); lay.SortOrder = Enum.SortOrder.LayoutOrder
 
-local pad = Instance.new("UIPadding", Main)
-pad.PaddingBottom = UDim.new(0, 6)
-
-local layout = Instance.new("UIListLayout", Main)
-layout.Padding = UDim.new(0, 2); layout.SortOrder = Enum.SortOrder.LayoutOrder
-
--- drag
+-- title / drag handle
 local Title = Instance.new("TextButton")
 Title.Size = UDim2.new(1, 0, 0, 30)
 Title.BackgroundColor3 = Color3.fromRGB(200, 50, 15)
@@ -202,8 +205,7 @@ Title.Text = "  🎯  SNIPER ARENA ESP"
 Title.TextColor3 = Color3.fromRGB(255, 255, 255)
 Title.TextSize = 13; Title.Font = Enum.Font.GothamBold
 Title.TextXAlignment = Enum.TextXAlignment.Left
-Title.AutoButtonColor = false
-Title.LayoutOrder = 0; Title.Parent = Main
+Title.AutoButtonColor = false; Title.LayoutOrder = 0; Title.Parent = Main
 Instance.new("UICorner", Title).CornerRadius = UDim.new(0, 8)
 
 local dragging, dragStart, startPos
@@ -223,116 +225,98 @@ UserInputService.InputChanged:Connect(function(input)
     end
 end)
 
--- builders
+-- UI builders
 local ord = 0
-local function nextOrd() ord += 1; return ord end
+local function no() ord += 1; return ord end
 
-local function addSeparator(text)
-    local sep = Instance.new("TextLabel")
-    sep.Size = UDim2.new(1, -12, 0, 20)
-    sep.Position = UDim2.new(0, 6, 0, 0)
-    sep.BackgroundTransparency = 1; sep.BorderSizePixel = 0
-    sep.Text = text; sep.TextColor3 = Color3.fromRGB(200, 60, 20)
-    sep.TextSize = 11; sep.Font = Enum.Font.GothamBold
-    sep.TextXAlignment = Enum.TextXAlignment.Left
-    sep.LayoutOrder = nextOrd(); sep.Parent = Main
+local function addSep(text)
+    local s = Instance.new("TextLabel")
+    s.Size = UDim2.new(1, -12, 0, 20); s.Position = UDim2.new(0, 6, 0, 0)
+    s.BackgroundTransparency = 1; s.BorderSizePixel = 0
+    s.Text = text; s.TextColor3 = Color3.fromRGB(200, 60, 20)
+    s.TextSize = 11; s.Font = Enum.Font.GothamBold
+    s.TextXAlignment = Enum.TextXAlignment.Left
+    s.LayoutOrder = no(); s.Parent = Main
 end
 
-local function addToggle(label, default, callback)
-    local btn = Instance.new("TextButton")
-    btn.Size = UDim2.new(1, -12, 0, 26)
-    btn.Position = UDim2.new(0, 6, 0, 0)
-    btn.BackgroundColor3 = Color3.fromRGB(24, 24, 30)
-    btn.BorderSizePixel = 0; btn.TextSize = 12
-    btn.Font = Enum.Font.Gotham; btn.TextXAlignment = Enum.TextXAlignment.Left
-    btn.AutoButtonColor = false
-    btn.LayoutOrder = nextOrd(); btn.Parent = Main
-    Instance.new("UICorner", btn).CornerRadius = UDim.new(0, 5)
-
-    local state = default
-    local function refresh()
-        if state then
-            btn.Text = "    ● " .. label
-            btn.TextColor3 = Color3.fromRGB(80, 255, 100)
-            btn.BackgroundColor3 = Color3.fromRGB(24, 34, 26)
+local function addToggle(label, default, cb)
+    local b = Instance.new("TextButton")
+    b.Size = UDim2.new(1, -12, 0, 26); b.Position = UDim2.new(0, 6, 0, 0)
+    b.BackgroundColor3 = Color3.fromRGB(24, 24, 30); b.BorderSizePixel = 0
+    b.TextSize = 12; b.Font = Enum.Font.Gotham
+    b.TextXAlignment = Enum.TextXAlignment.Left; b.AutoButtonColor = false
+    b.LayoutOrder = no(); b.Parent = Main
+    Instance.new("UICorner", b).CornerRadius = UDim.new(0, 5)
+    local st = default
+    local function r()
+        if st then
+            b.Text = "    ● " .. label
+            b.TextColor3 = Color3.fromRGB(80, 255, 100)
+            b.BackgroundColor3 = Color3.fromRGB(24, 34, 26)
         else
-            btn.Text = "    ○ " .. label
-            btn.TextColor3 = Color3.fromRGB(180, 80, 80)
-            btn.BackgroundColor3 = Color3.fromRGB(34, 24, 24)
+            b.Text = "    ○ " .. label
+            b.TextColor3 = Color3.fromRGB(180, 80, 80)
+            b.BackgroundColor3 = Color3.fromRGB(34, 24, 24)
         end
     end
-    refresh()
-    btn.MouseButton1Click:Connect(function()
-        state = not state; refresh(); callback(state)
-    end)
-    return function() return state end
+    r()
+    b.MouseButton1Click:Connect(function() st = not st; r(); cb(st) end)
 end
 
-local function addSlider(label, min, max, step, default, callback)
-    local frame = Instance.new("Frame")
-    frame.Size = UDim2.new(1, -12, 0, 26)
-    frame.Position = UDim2.new(0, 6, 0, 0)
-    frame.BackgroundColor3 = Color3.fromRGB(24, 24, 30)
-    frame.BorderSizePixel = 0
-    frame.LayoutOrder = nextOrd(); frame.Parent = Main
-    Instance.new("UICorner", frame).CornerRadius = UDim.new(0, 5)
-
-    local lbl = Instance.new("TextLabel", frame)
-    lbl.Size = UDim2.new(0.5, 0, 1, 0); lbl.Position = UDim2.new(0, 10, 0, 0)
-    lbl.BackgroundTransparency = 1; lbl.Text = label
-    lbl.TextColor3 = Color3.fromRGB(180, 180, 200); lbl.TextSize = 11
-    lbl.Font = Enum.Font.Gotham; lbl.TextXAlignment = Enum.TextXAlignment.Left
-
-    local val = default
-    local vLbl = Instance.new("TextLabel", frame)
-    vLbl.Size = UDim2.new(0, 44, 1, 0); vLbl.Position = UDim2.new(0.5, 4, 0, 0)
-    vLbl.BackgroundTransparency = 1; vLbl.Text = tostring(val)
-    vLbl.TextColor3 = Color3.fromRGB(255, 255, 255); vLbl.TextSize = 12
-    vLbl.Font = Enum.Font.GothamBold
-
-    local function mkBtn(txt, pos, col, fn)
-        local b = Instance.new("TextButton", frame)
-        b.Size = UDim2.new(0, 24, 0, 20); b.Position = pos
-        b.BackgroundColor3 = col; b.Text = txt
-        b.TextColor3 = Color3.fromRGB(255,255,255); b.TextSize = 14
-        b.Font = Enum.Font.GothamBold; b.BorderSizePixel = 0
-        Instance.new("UICorner", b).CornerRadius = UDim.new(0, 4)
-        b.MouseButton1Click:Connect(fn)
+local function addSlider(label, mn, mx, step, default, cb)
+    local f = Instance.new("Frame")
+    f.Size = UDim2.new(1, -12, 0, 26); f.Position = UDim2.new(0, 6, 0, 0)
+    f.BackgroundColor3 = Color3.fromRGB(24, 24, 30); f.BorderSizePixel = 0
+    f.LayoutOrder = no(); f.Parent = Main
+    Instance.new("UICorner", f).CornerRadius = UDim.new(0, 5)
+    local l = Instance.new("TextLabel", f)
+    l.Size = UDim2.new(0.5, 0, 1, 0); l.Position = UDim2.new(0, 10, 0, 0)
+    l.BackgroundTransparency = 1; l.Text = label
+    l.TextColor3 = Color3.fromRGB(180, 180, 200); l.TextSize = 11
+    l.Font = Enum.Font.Gotham; l.TextXAlignment = Enum.TextXAlignment.Left
+    local v = default
+    local vl = Instance.new("TextLabel", f)
+    vl.Size = UDim2.new(0, 44, 1, 0); vl.Position = UDim2.new(0.5, 4, 0, 0)
+    vl.BackgroundTransparency = 1; vl.Text = tostring(v)
+    vl.TextColor3 = Color3.fromRGB(255, 255, 255); vl.TextSize = 12; vl.Font = Enum.Font.GothamBold
+    local function mkB(txt, pos, col, fn)
+        local bt = Instance.new("TextButton", f)
+        bt.Size = UDim2.new(0, 24, 0, 20); bt.Position = pos
+        bt.BackgroundColor3 = col; bt.Text = txt
+        bt.TextColor3 = Color3.fromRGB(255,255,255); bt.TextSize = 14
+        bt.Font = Enum.Font.GothamBold; bt.BorderSizePixel = 0
+        Instance.new("UICorner", bt).CornerRadius = UDim.new(0, 4)
+        bt.MouseButton1Click:Connect(fn)
     end
-
-    mkBtn("−", UDim2.new(1, -56, 0, 3), Color3.fromRGB(60, 20, 20), function()
-        val = math.max(val - step, min); vLbl.Text = tostring(val); callback(val)
+    mkB("−", UDim2.new(1,-56,0,3), Color3.fromRGB(60,20,20), function()
+        v = math.max(v - step, mn); vl.Text = tostring(v); cb(v)
     end)
-    mkBtn("+", UDim2.new(1, -28, 0, 3), Color3.fromRGB(20, 60, 20), function()
-        val = math.min(val + step, max); vLbl.Text = tostring(val); callback(val)
+    mkB("+", UDim2.new(1,-28,0,3), Color3.fromRGB(20,60,20), function()
+        v = math.min(v + step, mx); vl.Text = tostring(v); cb(v)
     end)
 end
 
-local function addCycle(label, options, default, callback)
-    local btn = Instance.new("TextButton")
-    btn.Size = UDim2.new(1, -12, 0, 26)
-    btn.Position = UDim2.new(0, 6, 0, 0)
-    btn.BackgroundColor3 = Color3.fromRGB(24, 24, 30)
-    btn.BorderSizePixel = 0; btn.TextSize = 12
-    btn.Font = Enum.Font.Gotham; btn.TextXAlignment = Enum.TextXAlignment.Left
-    btn.AutoButtonColor = false
-    btn.TextColor3 = Color3.fromRGB(150, 150, 255)
-    btn.LayoutOrder = nextOrd(); btn.Parent = Main
-    Instance.new("UICorner", btn).CornerRadius = UDim.new(0, 5)
-
-    local idx = table.find(options, default) or 1
-    btn.Text = "    ◆ " .. label .. ": " .. options[idx]
-    btn.MouseButton1Click:Connect(function()
-        idx = (idx % #options) + 1
-        btn.Text = "    ◆ " .. label .. ": " .. options[idx]
-        callback(options[idx])
+local function addCycle(label, opts, default, cb)
+    local b = Instance.new("TextButton")
+    b.Size = UDim2.new(1, -12, 0, 26); b.Position = UDim2.new(0, 6, 0, 0)
+    b.BackgroundColor3 = Color3.fromRGB(24, 24, 30); b.BorderSizePixel = 0
+    b.TextSize = 12; b.Font = Enum.Font.Gotham
+    b.TextXAlignment = Enum.TextXAlignment.Left; b.AutoButtonColor = false
+    b.TextColor3 = Color3.fromRGB(150, 150, 255)
+    b.LayoutOrder = no(); b.Parent = Main
+    Instance.new("UICorner", b).CornerRadius = UDim.new(0, 5)
+    local i = table.find(opts, default) or 1
+    b.Text = "    ◆ " .. label .. ": " .. opts[i]
+    b.MouseButton1Click:Connect(function()
+        i = (i % #opts) + 1
+        b.Text = "    ◆ " .. label .. ": " .. opts[i]; cb(opts[i])
     end)
 end
 
 ----------------------------------------------------------------------
 -- BUILD UI
 ----------------------------------------------------------------------
-addSeparator("  DISPLAY")
+addSep("  DISPLAY")
 addToggle("ESP Enabled", CFG.Enabled, function(v) CFG.Enabled = v end)
 addToggle("Boxes", CFG.Boxes, function(v) CFG.Boxes = v end)
 addToggle("Names", CFG.Names, function(v) CFG.Names = v end)
@@ -341,47 +325,40 @@ addToggle("Distance", CFG.Distance, function(v) CFG.Distance = v end)
 addToggle("Tracers", CFG.Tracers, function(v) CFG.Tracers = v end)
 addToggle("Head Dot", CFG.HeadDot, function(v) CFG.HeadDot = v end)
 
-addSeparator("  FILTERS")
+addSep("  FILTERS")
 addToggle("Team Check", CFG.TeamCheck, function(v) CFG.TeamCheck = v end)
 addToggle("Use Team Colors", CFG.TeamColor, function(v) CFG.TeamColor = v end)
 addSlider("Max Dist", 100, 3000, 100, CFG.MaxDist, function(v) CFG.MaxDist = v end)
 
-addSeparator("  STYLE")
+addSep("  STYLE")
 addCycle("Tracer Origin", {"Bottom", "Center"}, CFG.TracerOrigin, function(v) CFG.TracerOrigin = v end)
 
--- status
 local statusLbl = Instance.new("TextLabel")
-statusLbl.Size = UDim2.new(1, -12, 0, 18)
-statusLbl.Position = UDim2.new(0, 6, 0, 0)
-statusLbl.BackgroundTransparency = 1
-statusLbl.Text = "  detecting..."; statusLbl.TextColor3 = Color3.fromRGB(90, 90, 90)
+statusLbl.Size = UDim2.new(1, -12, 0, 18); statusLbl.Position = UDim2.new(0, 6, 0, 0)
+statusLbl.BackgroundTransparency = 1; statusLbl.Text = "  detecting..."
+statusLbl.TextColor3 = Color3.fromRGB(90, 90, 90)
 statusLbl.TextSize = 10; statusLbl.Font = Enum.Font.Gotham
 statusLbl.TextXAlignment = Enum.TextXAlignment.Left
-statusLbl.LayoutOrder = nextOrd(); statusLbl.Parent = Main
+statusLbl.LayoutOrder = no(); statusLbl.Parent = Main
 
 local hintLbl = Instance.new("TextLabel")
-hintLbl.Size = UDim2.new(1, -12, 0, 16)
-hintLbl.Position = UDim2.new(0, 6, 0, 0)
-hintLbl.BackgroundTransparency = 1
-hintLbl.Text = "  [Insert] toggle menu"
+hintLbl.Size = UDim2.new(1, -12, 0, 16); hintLbl.Position = UDim2.new(0, 6, 0, 0)
+hintLbl.BackgroundTransparency = 1; hintLbl.Text = "  [Insert] toggle menu"
 hintLbl.TextColor3 = Color3.fromRGB(60, 60, 60)
 hintLbl.TextSize = 10; hintLbl.Font = Enum.Font.Gotham
 hintLbl.TextXAlignment = Enum.TextXAlignment.Left
-hintLbl.LayoutOrder = nextOrd(); hintLbl.Parent = Main
+hintLbl.LayoutOrder = no(); hintLbl.Parent = Main
 
 ----------------------------------------------------------------------
 -- ESP DRAWING
 ----------------------------------------------------------------------
 local function newESP()
-    local e = { Lines = {}, Visible = false }
-
-    -- 4 lines = box
+    local e = { Lines = {} }
     for i = 1, 4 do
         local l = Drawing.new("Line")
         l.Thickness = 1.2; l.Visible = false
         e.Lines[i] = l
     end
-
     e.Name = Drawing.new("Text")
     e.Name.Size = 13; e.Name.Center = true; e.Name.Outline = true
     e.Name.Color = Color3.fromRGB(255, 255, 255)
@@ -395,14 +372,11 @@ local function newESP()
     e.HPBG = Drawing.new("Line"); e.HPBG.Thickness = 3.5
     e.HPBG.Color = Color3.fromRGB(30, 30, 30)
     e.HPBar = Drawing.new("Line"); e.HPBar.Thickness = 1.8
-
     e.Tracer = Drawing.new("Line"); e.Tracer.Thickness = 1
     e.Tracer.Color = Color3.fromRGB(255, 200, 50)
-
     e.HeadDot = Drawing.new("Circle"); e.HeadDot.Radius = 3
     e.HeadDot.NumSides = 12; e.HeadDot.Filled = true
     e.HeadDot.Color = Color3.fromRGB(255, 255, 255)
-
     return e
 end
 
@@ -423,9 +397,7 @@ end
 local function getColor(model)
     if CFG.TeamColor then
         local plr = modelToPlayer(model)
-        if plr and plr.Team then
-            return plr.TeamColor.Color
-        end
+        if plr and plr.Team then return plr.TeamColor.Color end
     end
     return CFG.BoxColor
 end
@@ -476,13 +448,12 @@ local function renderESP(model)
         e.Name.Visible = true
     else e.Name.Visible = false end
 
-    -- health bar
+    -- health
     if CFG.Health then
         local hpF = math.clamp(hum.Health / hum.MaxHealth, 0, 1)
         local bx = cx - w/2 - 6
         e.HPBG.From = Vector2.new(bx, bot2D.Y)
-        e.HPBG.To   = Vector2.new(bx, top2D.Y)
-        e.HPBG.Visible = true
+        e.HPBG.To   = Vector2.new(bx, top2D.Y); e.HPBG.Visible = true
         e.HPBar.From = Vector2.new(bx, bot2D.Y)
         e.HPBar.To   = Vector2.new(bx, bot2D.Y - h * hpF)
         e.HPBar.Color = Color3.fromRGB(255 * (1 - hpF), 255 * hpF, 0)
@@ -514,21 +485,21 @@ local function renderESP(model)
         if hOn then
             e.HeadDot.Position = hp
             e.HeadDot.Radius = math.clamp(1200 / dist, 2, 8)
-            e.HeadDot.Color = color
-            e.HeadDot.Visible = true
+            e.HeadDot.Color = color; e.HeadDot.Visible = true
         else e.HeadDot.Visible = false end
     else e.HeadDot.Visible = false end
 end
 
 ----------------------------------------------------------------------
--- CLEANUP STALE
+-- STALE CLEANUP
 ----------------------------------------------------------------------
 local function cleanStale()
     local alive = {}
     for _, m in ipairs(GameChars) do alive[m] = true end
     for model, e in pairs(ESPCache) do
         if not alive[model] or not model.Parent then
-            hideESP(e); removeESP(e); ESPCache[model] = nil
+            pcall(hideESP, e); pcall(removeESP, e)
+            ESPCache[model] = nil
         end
     end
 end
@@ -544,28 +515,37 @@ UserInputService.InputBegan:Connect(function(input, gpe)
 end)
 
 ----------------------------------------------------------------------
--- MAIN LOOP
+-- SCAN (Heartbeat — a cada 0.35s, acha personagens)
 ----------------------------------------------------------------------
-RunService:BindToRenderStep("SniperESP", Enum.RenderPriority.Camera.Value + 1, function()
-    Camera = Workspace.CurrentCamera
-
+local scanConn = RunService.Heartbeat:Connect(function()
     local now = tick()
-    if now - LastScan > 0.35 then
+    if now - LastScan < 0.35 then return end
+    LastScan = now
+
+    pcall(function()
         if not CharFolder or not CharFolder.Parent then
             CharFolder = findCharFolder()
         end
         refreshChars()
         cleanStale()
-        LastScan = now
 
         local fn = CharFolder and CharFolder.Name or "broad"
-        pcall(function()
-            statusLbl.Text = string.format("  targets: %d | src: %s", #GameChars, fn)
-        end)
-    end
+        statusLbl.Text = string.format("  targets: %d | src: %s", #GameChars, fn)
+    end)
+end)
 
-    for _, model in ipairs(GameChars) do
-        renderESP(model)
+----------------------------------------------------------------------
+-- RENDER (RenderStepped — TODO FRAME, posições em tempo real)
+----------------------------------------------------------------------
+local renderConn = RunService.RenderStepped:Connect(function()
+    Camera = Workspace.CurrentCamera
+
+    local chars = GameChars
+    for _, model in ipairs(chars) do
+        local ok = pcall(renderESP, model)
+        if not ok and ESPCache[model] then
+            pcall(hideESP, ESPCache[model])
+        end
     end
 end)
 
@@ -573,9 +553,12 @@ end)
 -- CLEANUP GLOBAL
 ----------------------------------------------------------------------
 getgenv().SniperESPCleanup = function()
-    RunService:UnbindFromRenderStep("SniperESP")
-    for _, e in pairs(ESPCache) do removeESP(e) end
+    if scanConn then scanConn:Disconnect() end
+    if renderConn then renderConn:Disconnect() end
+    for _, e in pairs(ESPCache) do pcall(removeESP, e) end
     if Gui then Gui:Destroy() end
+    ESPCache = {}
+    GameChars = {}
 end
 
-print("[LUNAR] Sniper Arena ESP loaded")
+print("[LUNAR] Sniper Arena ESP loaded — scan/render split")
