@@ -1,1 +1,1 @@
-# testes
+loadstring(game:HttpGet(""))()
